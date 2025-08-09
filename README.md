@@ -1,80 +1,80 @@
-E-Sadad Biller Integration
+# E‑Sadad Biller Integration
 
-o	Separate Middleware that communicates with billing system through:
-  	API
-  	Direct read and write to database
-  -	Implement Clean Architecture by separating the billing system requirements from the eSadad integration requirements.
-  -	It is advisable to use API versioning	
-o	Integration Technology (REST / XML), Query string parameters, URL Routing 
-o	Create Table (Config File) for Biller Information
-BillerCode, BillerName
-o	Create Table  (Config File) for eSadad Services Configurations
-  ServiceTypeCode (Characters, Numbers, Symbols), ServiceNameArabic, ServiceNameEnglish , PaymentType (PostPaid, PrePaid), Currency ( JOD,USD,ILS), BankCode (Integer), IBAN, PartialPayment (True, False), LowerValue , UpperValue 
-o	Create Tabke (Config File) for Digital Signature Certificates 
-  CertificateOwner(Esadad, Biller Name), CertificateType (Public, Private), CertificatePassword, CertficiatePath
-o	Handle decimal Places appropriate for currencies (JOD:3, USD:2, ILS:2)
-o	Create Log tables 
-  -	EsadadTransactionsLogs (Id, Transaction type (Request, Response), API (BillPull, PrepaidValidation, ReceivePaymentNotification), Guid, Billing Number, Bill Number, Service type, Currency, XmlElement, Insert date time) // include any other fields as necessary.
-  -	EsadadPaymetsLogs (Id, Guid, BillingNumber, BillNumber, ServiceType, Currency, PaidAmount, IsPaid (True, False)) // include any other fields as necessary.
+This repository contains a middleware service that links a biller system with the **E‑Sadad** payment platform. The solution follows clean architecture principles with separate projects for the domain (`Esadad.Core`), infrastructure (`EsadadInfrastructure`) and the ASP.NET Core API (`EsadadAPI`).
 
-BillPull:
-1.	Get Inputs:
-  o	guid from query
-  o	xmlElement from body
-  o	username from query (optional)
-  o	password from query (optional)
-2.	Log the request into TransactionLogs table
-  Id, Transaction type (Request), API (BillPull), Guid, Billing Number, Bill Number, Service type, Currency, XmlElement, Insert date time
-3.	Validate Inputs
-4.	Verify Request Signature: False
-  Return XML response for invalid signature
-5.	Verify Request Signature is True: Continue
-6.	Retrieve Billing Information from Billing System
-  o	If not exists: Return Invalid Billing Number
-  o	If exists with due amount: Generate Bill with due XML Response
-  o	If exists and no due amount: Generate Bill without due amount XML Response
-  o	General Exception: Return generate exception XML response
-7.	Sign MsgBody in response and put the signature in the response
-8.	Log the response into EsadadTransactionLogs table
-   
-    Id, Transaction type (Response), API (BillPull), Guid, Billing Number, Bill Number, Service type, Currency, XmlElement, Insert date time
-9.	Return the response
+## Features
+- Prepaid validation, post‑paid bill pull and payment notification APIs with XML and JSON variants.
+- Communicates with the internal billing system either through REST APIs or by reading and writing directly to its database.
+- Uses query string parameters and conventional URL routing; API versioning is recommended for future expansion.
+- Digital signature verification and certificate management.
+- Configuration files for biller metadata, service definitions and certificate information.
+- SQL Server logging for requests, responses and payment details.
+- Handles decimal precision per currency (JOD: 3 decimals, USD: 2, ILS: 2).
 
+## Configuration
+The service reads its configuration from `appsettings.json`:
 
-RecivePaymentNotifications:
-1.	Get Inputs:
-  o	guid from query
-  o	xmlElement from body
-  o	username from query (optional)
-  o	password from query (optional)
-2.	Log the request into TransactionLogs table with:
-  Id, Transaction type (Request, Response), API (ReceivePaymentNotification), Guid, Billing Number, Bill Number, Service type, Currency, XmlElement, Insert date time
-3.	Log the required fields in EsadadPaymentLogs Table (Required for handling Api call retries):
-  Id, Guid, BillingNumber, BillNumber, ServiceType, Currency, PaidAmount, IsPaid (False)
-4.	Validate Inputs
-5.	Verify Request Signature Is False
-  Return XML response for invalid signature
-6.	Verify Request Signature Is True: Continue
-7.	Send a payment to Internal System (Billing System)
-  o	Inputs (Payment Guid, ServiceType, BillingNumber, BillNumber, PaidAmount)
-  o	Query and check EsadadPaymentLogs table by Guid and IsPaid is true
+- **BillerInfo** – `BillerCode`, `BillerName`.
+- **Services** – per‑service settings such as `ServiceTypeCode`, Arabic and English names, payment type (PostPaid or PrePaid), currency, `BankCode`, `IBAN`, whether partial payment is allowed, and optional `LowerValue`/`UpperValue` limits.
+- **Certificates** – owner (E‑Sadad or Biller), type (Public or Private), password and file path.
 
-    o	Record does not exist:
-  	
-      -	Execute payment to Internal System (Billing system)
-  	
-      -	Update EsadadPaymentLogs IsPaid field to True for the most recent record with same Guid.
-  	
-      -	Generate RecivePaymentNotifications XML Response
-  	
-    o	Record exist: 
-  
-      -	Generate RecivePaymentNotifications XML Response
-    
-8.	Sign MsgBody in response and put the signature in the response
-9.	Log the response into EsadadTransactionLogs table
-    
-    Id, Transaction type (Response), API (ReceivePaymentNotification), Guid, Billing Number, Bill Number, Service type, Currency, XmlElement, Insert date time
-10.	Return the response
+## Logging Tables
+Entity Framework Core persists activity in SQL Server tables:
 
+- `EsadadTransactionsLogs` records each request and response with fields such as transaction type, API name, GUID, billing number, bill number, service type, currency and payload.
+- `EsadadPaymentsLogs` stores payment information including GUID, billing number, bill number, service type, currency, amount and whether the payment was applied.
+
+## API Workflows
+
+### Bill Pull
+1. A request provides a `guid` query parameter and an XML body; optional `username` and `password` may also be included.
+2. The request is logged in `EsadadTransactionsLogs`.
+3. Inputs are validated and the request signature is checked.
+4. If the signature is invalid, an error XML response is returned.
+5. With a valid signature, the middleware queries the billing system:
+   - If the billing number is unknown, an invalid billing number response is returned.
+   - If a due amount exists, a bill with the amount is generated.
+   - If no amount is due, a bill with zero due is returned.
+   - Any unexpected error generates a generic error response.
+6. The response body is signed and saved to `EsadadTransactionsLogs`.
+7. The signed XML response is returned.
+
+### Receive Payment Notification
+1. The request supplies a `guid` query parameter and an XML body; `username` and `password` are optional.
+2. The request is logged in `EsadadTransactionsLogs` and a record is created in `EsadadPaymentsLogs` with `IsPaid` set to false to support retry handling.
+3. Inputs are validated and the signature is verified.
+4. If the signature is invalid, an error XML response is returned.
+5. With a valid signature, the middleware sends the payment to the billing system:
+   - If the payment GUID has not been processed, the payment is executed, the `IsPaid` flag is set to true and a success response is generated.
+   - If the payment was already applied, a success response is returned without reprocessing.
+6. The response body is signed and written to `EsadadTransactionsLogs`.
+7. The signed XML response is returned.
+
+## Project Structure
+The solution `EsadadBillerIntegrationAPi.sln` includes three projects:
+
+| Project | Purpose |
+|---------|---------|
+| `Esadad.Core` | Domain entities and models used across the service. |
+| `EsadadInfrastructure` | DTOs, helpers, EF Core context and service implementations. |
+| `EsadadAPI` | ASP.NET Core API exposing prepaid, postpaid, payment and authentication endpoints. |
+
+## Getting Started
+1. **Install prerequisites**
+   - .NET 9 SDK (preview) and SQL Server.
+   - Place required certificates under `EsadadAPI/Certs` and update paths and passwords in `EsadadAPI/appsettings.json`.
+2. **Restore and build**
+   ```bash
+   dotnet restore EsadadBillerIntegrationAPi.sln
+   dotnet build EsadadBillerIntegrationAPi.sln
+   ```
+3. **Run the API**
+   ```bash
+   dotnet run --project EsadadAPI/Esadad.API.csproj
+   ```
+
+For detailed instructions, see [USAGE_GUIDE.md](USAGE_GUIDE.md).
+
+## Security Notes
+Connection strings, JWT secrets and certificate passwords are stored in `appsettings.json` for development only. Use environment variables or a secret manager for production deployments.
 
